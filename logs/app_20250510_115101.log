@@ -1,0 +1,14 @@
+2025-05-10 11:51:06,753 - ERROR - error from callback <bound method WebSocketApp.on_error of <gui_app.WebSocketApp object at 0x000001C52B679010>>: WebSocketApp.on_error() takes 2 positional arguments but 3 were given
+2025-05-10 11:51:06,754 - INFO - tearing down on exception WebSocketApp.on_error() takes 2 positional arguments but 3 were given
+2025-05-10 11:51:06,754 - ERROR - error from callback <bound method WebSocketApp.on_close of <gui_app.WebSocketApp object at 0x000001C52B679010>>: WebSocketApp.on_close() takes 3 positional arguments but 4 were given
+2025-05-10 11:51:06,754 - ERROR - WebSocket 연결 오류: WebSocketApp.on_error() takes 2 positional arguments but 3 were given
+2025-05-10 11:51:11,768 - INFO - Websocket connected
+2025-05-10 11:51:11,769 - ERROR - error from callback <bound method WebSocketApp.on_open of <gui_app.WebSocketApp object at 0x000001C52B679010>>: WebSocketApp.on_open() takes 1 positional argument but 2 were given
+2025-05-10 11:51:11,770 - ERROR - error from callback <bound method WebSocketApp.on_error of <gui_app.WebSocketApp object at 0x000001C52B679010>>: WebSocketApp.on_error() takes 2 positional arguments but 3 were given
+2025-05-10 11:51:11,770 - INFO - tearing down on exception WebSocketApp.on_error() takes 2 positional arguments but 3 were given
+2025-05-10 11:51:11,771 - ERROR - error from callback <bound method WebSocketApp.on_close of <gui_app.WebSocketApp object at 0x000001C52B679010>>: WebSocketApp.on_close() takes 3 positional arguments but 4 were given
+2025-05-10 11:51:11,772 - ERROR - WebSocket 연결 오류: WebSocketApp.on_error() takes 2 positional arguments but 3 were given
+2025-05-10 11:51:16,790 - ERROR - error from callback <bound method WebSocketApp.on_error of <gui_app.WebSocketApp object at 0x000001C52B679010>>: WebSocketApp.on_error() takes 2 positional arguments but 3 were given
+2025-05-10 11:51:16,790 - INFO - tearing down on exception WebSocketApp.on_error() takes 2 positional arguments but 3 were given
+2025-05-10 11:51:16,790 - ERROR - error from callback <bound method WebSocketApp.on_close of <gui_app.WebSocketApp object at 0x000001C52B679010>>: WebSocketApp.on_close() takes 3 positional arguments but 4 were given
+2025-05-10 11:51:16,790 - ERROR - WebSocket 연결 오류: WebSocketApp.on_error() takes 2 positional arguments but 3 were given

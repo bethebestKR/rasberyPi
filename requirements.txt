@@ -1,0 +1,3 @@
+# OCPP 충전소 시뮬레이터 GUI 필수 라이브러리
+websockets>=10.0
+pyserial>=3.5
