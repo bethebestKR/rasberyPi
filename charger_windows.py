@@ -162,7 +162,7 @@ class ChargingWindow(tk.Toplevel):
     def __init__(self, parent, charger_id, ocpp_client, event_loop):
         super().__init__(parent)
         self.title(f"충전기 {charger_id}")
-        self.geometry("350x400")
+        self.geometry("400x450")  # 창 크기를 더 작게 조정
         self.resizable(False, False)
         self.charger_id = charger_id
         self.ocpp_client = ocpp_client
@@ -172,12 +172,13 @@ class ChargingWindow(tk.Toplevel):
         self.power_threshold = 100  # 충전 시작을 위한 전력 임계값 (W)
         self.power_check_timer = None
         self.last_power_value = 0
-        
-        # CTOC 연결 상태
         self.ctoc_connected = False
-        
-        # 수동 입력 모드
         self.manual_mode = False
+        
+        # 시리얼 포트 사용 여부 확인
+        self.using_serial = False
+        if hasattr(self.ocpp_client, 'serial_port') and self.ocpp_client.serial_port:
+            self.using_serial = True
         
         # Center window
         self.update_idletasks()
@@ -239,55 +240,38 @@ class ChargingWindow(tk.Toplevel):
         connection_value = ttk.Label(connection_frame, textvariable=self.connection_var)
         connection_value.pack(side=tk.LEFT)
         
-        # Manual power input frame
-        manual_frame = ttk.LabelFrame(main_frame, text="수동 전력 설정", padding="10")
-        manual_frame.pack(fill=tk.X, pady=10)
-        
-        # Power input
-        power_frame = ttk.Frame(manual_frame)
-        power_frame.pack(fill=tk.X, pady=5)
-        
-        power_label = ttk.Label(power_frame, text="전력 (W):", anchor="w")
-        power_label.pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.power_entry = ttk.Entry(power_frame)
-        self.power_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.power_entry.insert(0, "3000")
-        
-        # Apply button
-        apply_button = ttk.Button(
-            manual_frame,
-            text="전력값 적용",
-            command=self.apply_manual_power
-        )
-        apply_button.pack(fill=tk.X, pady=5)
-        
-        # CTOC simulation frame
-        simulation_frame = ttk.LabelFrame(main_frame, text="CTOC 시뮬레이션", padding="10")
-        simulation_frame.pack(fill=tk.X, pady=10)
-        
-        # Simulation buttons
-        sim_buttons_frame = ttk.Frame(simulation_frame)
-        sim_buttons_frame.pack(fill=tk.X, pady=5)
-        
-        self.sim_connect_button = ttk.Button(
-            sim_buttons_frame,
-            text="CTOC 연결 시뮬레이션",
-            command=self.start_simulation
-        )
-        self.sim_connect_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
-        
-        self.sim_disconnect_button = ttk.Button(
-            sim_buttons_frame,
-            text="CTOC 해제 시뮬레이션",
-            command=self.stop_simulation,
-            state=tk.DISABLED
-        )
-        self.sim_disconnect_button.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=(5, 0))
+        # 시리얼 포트 사용 여부에 따라 수동 전력 설정 UI 표시 여부 결정
+        if not self.using_serial:
+            # Manual power input frame (시리얼 연결 안된 경우만 표시)
+            manual_frame = ttk.LabelFrame(main_frame, text="수동 전력 설정", padding="10")
+            manual_frame.pack(fill=tk.X, pady=10)
+            
+            # Power input
+            power_frame = ttk.Frame(manual_frame)
+            power_frame.pack(fill=tk.X, pady=5)
+            
+            power_label = ttk.Label(power_frame, text="전력 (W):", anchor="w")
+            power_label.pack(side=tk.LEFT, padx=(0, 5))
+            
+            self.power_entry = ttk.Entry(power_frame)
+            self.power_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self.power_entry.insert(0, "3000")
+            
+            # Apply button
+            apply_button = ttk.Button(
+                manual_frame,
+                text="전력값 적용",
+                command=self.apply_manual_power
+            )
+            apply_button.pack(fill=tk.X, pady=5)
+        else:
+            # 시리얼 포트 사용 중일 때는 Entry를 만들지만 표시하지 않음 (다른 메서드에서 참조할 때 오류 방지)
+            self.power_entry = ttk.Entry(main_frame)
+            self.power_entry.insert(0, "3000")
         
         # Buttons frame
         buttons_frame = ttk.Frame(main_frame)
-        buttons_frame.pack(fill=tk.X, pady=10)
+        buttons_frame.pack(fill=tk.X, pady=20)
         
         # Start button
         self.start_button = tk.Button(
@@ -296,12 +280,12 @@ class ChargingWindow(tk.Toplevel):
             command=self.start_charging_manually,
             bg="#4CAF50",  # Green background
             fg="white",    # White text
-            font=("Arial", 12, "bold"),
+            font=("Arial", 14, "bold"),
             height=2,
             relief=tk.RAISED,
             borderwidth=1
         )
-        self.start_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
+        self.start_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 10))
         
         # Stop button (disabled by default)
         self.stop_button = tk.Button(
@@ -310,22 +294,13 @@ class ChargingWindow(tk.Toplevel):
             command=self.stop_charging_manually,
             bg="#F44336",  # Red background
             fg="white",    # White text
-            font=("Arial", 12, "bold"),
+            font=("Arial", 14, "bold"),
             height=2,
             state=tk.DISABLED,
             relief=tk.RAISED,
             borderwidth=1
         )
-        self.stop_button.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=(5, 0))
-        
-        # Information label
-        info_label = ttk.Label(
-            main_frame, 
-            text="* CTOC 연결 시 자동으로 충전이 시작됩니다",
-            font=("Arial", 9),
-            foreground="blue"
-        )
-        info_label.pack(pady=(10, 0))
+        self.stop_button.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=(10, 0))
         
     def update_power_display(self, power_value):
         """전력 표시 업데이트"""
@@ -375,6 +350,10 @@ class ChargingWindow(tk.Toplevel):
         
     def apply_manual_power(self):
         """수동 전력값 적용"""
+        # 시리얼 포트 사용 중인 경우 이 함수는 무시
+        if self.using_serial:
+            return
+            
         try:
             power = float(self.power_entry.get())
             if power <= 0:
@@ -456,30 +435,35 @@ class ChargingWindow(tk.Toplevel):
         self.manual_mode = True
         
         try:
-            # 입력된 전력값 가져오기
-            power = float(self.power_entry.get())
-            if power <= 0:
-                messagebox.showerror("입력 오류", "전력은 양수여야 합니다")
-                return
+            # 시리얼 포트 사용 여부에 따라 전력값 설정 방식 분리
+            if not self.using_serial:
+                # 입력된 전력값 가져오기
+                power = float(self.power_entry.get())
+                if power <= 0:
+                    messagebox.showerror("입력 오류", "전력은 양수여야 합니다")
+                    return
+                    
+                # 전력값 설정
+                idx = self.charger_id - 1
                 
-            # 전력값 설정
-            idx = self.charger_id - 1
-            
-            # 전력값 설정 (GUI 클라이언트의 여러 배열에 모두 업데이트)
-            self.ocpp_client.manual_power[idx] = power
-            self.ocpp_client.power_data[idx] = power
-            
-            # 전압/전류 값도 업데이트 (로그에 사용되는 값)
-            voltage = 220.0
-            current = power / voltage
-            self.ocpp_client.load3_mv[idx*2] = voltage
-            self.ocpp_client.load3_mv[idx*2+1] = current
-            
-            # 충전 활성화 상태 설정
-            self.ocpp_client.charging_active[idx] = True
-            
-            # 케이블 연결 상태 설정
-            self.ocpp_client.cable_connected[idx] = True
+                # 전력값 설정 (GUI 클라이언트의 여러 배열에 모두 업데이트)
+                self.ocpp_client.manual_power[idx] = power
+                self.ocpp_client.power_data[idx] = power
+                
+                # 전압/전류 값도 업데이트 (로그에 사용되는 값)
+                voltage = 220.0
+                current = power / voltage
+                self.ocpp_client.load3_mv[idx*2] = voltage
+                self.ocpp_client.load3_mv[idx*2+1] = current
+                
+                # 충전 활성화 상태 설정
+                self.ocpp_client.charging_active[idx] = True
+                
+                # 케이블 연결 상태 설정
+                self.ocpp_client.cable_connected[idx] = True
+            else:
+                # 시리얼 포트 사용 중인 경우 실제 측정값 사용
+                power = max(3000, self.last_power_value)  # 최소 3000W 또는 현재 측정값
             
             # 충전 시작
             self.charging = True
@@ -504,80 +488,6 @@ class ChargingWindow(tk.Toplevel):
         """수동 충전 중지"""
         self.stop_charging_auto()
         
-    def start_simulation(self):
-        """CTOC 연결 시뮬레이션 시작"""
-        try:
-            # 입력된 전력값 가져오기
-            power = float(self.power_entry.get())
-            if power <= 0:
-                messagebox.showerror("입력 오류", "전력은 양수여야 합니다")
-                return
-                
-            # 버튼 상태 업데이트
-            self.sim_connect_button.config(state=tk.DISABLED)
-            self.sim_disconnect_button.config(state=tk.NORMAL)
-            
-            # 전력값 설정 - 로그에 표시되는 배열에도 업데이트
-            idx = self.charger_id - 1
-            
-            # 전력값 설정 (GUI 클라이언트의 여러 배열에 모두 업데이트)
-            self.ocpp_client.manual_power[idx] = power
-            self.ocpp_client.power_data[idx] = power
-            
-            # 전압/전류 값도 업데이트 (로그에 사용되는 값)
-            voltage = 220.0
-            current = power / voltage
-            self.ocpp_client.load3_mv[idx*2] = voltage
-            self.ocpp_client.load3_mv[idx*2+1] = current
-            
-            # 충전 활성화 상태 설정
-            self.ocpp_client.charging_active[idx] = True
-            
-            # 케이블 연결 상태 설정
-            self.ocpp_client.cable_connected[idx] = True
-            
-            # 상태 업데이트
-            self.update_power_display(power)
-            self.update_connection_status(True)
-            
-            # 자동 충전 시작 (CTOC 연결 감지로 인한)
-            if not self.charging:
-                self.start_charging_auto()
-            
-        except ValueError:
-            messagebox.showerror("입력 오류", "유효한 숫자를 입력하세요")
-        
-    def stop_simulation(self):
-        """CTOC 해제 시뮬레이션"""
-        # 버튼 상태 업데이트
-        self.sim_connect_button.config(state=tk.NORMAL)
-        self.sim_disconnect_button.config(state=tk.DISABLED)
-        
-        # 전력값 0으로 설정 - 로그에 표시되는 배열에도 업데이트
-        idx = self.charger_id - 1
-        
-        # 전력값 설정 (GUI 클라이언트의 여러 배열에 모두 업데이트)
-        self.ocpp_client.manual_power[idx] = 0
-        self.ocpp_client.power_data[idx] = 0
-        
-        # 전압/전류 값도 업데이트 (로그에 사용되는 값)
-        self.ocpp_client.load3_mv[idx*2] = 0.0
-        self.ocpp_client.load3_mv[idx*2+1] = 0.0
-        
-        # 충전 활성화 상태 설정
-        self.ocpp_client.charging_active[idx] = False
-        
-        # 케이블 연결 상태 설정
-        self.ocpp_client.cable_connected[idx] = False
-        
-        # 상태 업데이트
-        self.update_power_display(0)
-        self.update_connection_status(False)
-        
-        # 자동 충전 중지 (CTOC 연결 해제로 인한)
-        if self.charging and not self.manual_mode:
-            self.stop_charging_auto()
-            
     def on_closing(self):
         """창 닫기 처리"""
         # 전력 모니터링 중지

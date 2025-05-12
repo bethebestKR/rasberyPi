@@ -142,7 +142,7 @@ class OcppComm:
                 await asyncio.wait_for(self.response_event.wait(), timeout=10.0)
                 
                 # "수신완료" 메시지 확인
-                if self.last_response and "수신완료" in str(self.last_response):
+                if self.last_response and "3" in str(self.last_response):
                     print(f"'수신완료' 응답을 받았습니다. 메시지 전송 성공.")
                     return True
                 else:
