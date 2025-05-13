@@ -225,7 +225,7 @@ class ChargingWindow(tk.Toplevel):
         price_label = ttk.Label(price_frame, text="가격:", width=10, anchor="w")
         price_label.pack(side=tk.LEFT)
         
-        self.price_var = tk.StringVar(value="10원/W")
+        self.price_var = tk.StringVar(value="10원/Wh")
         price_value = ttk.Label(price_frame, textvariable=self.price_var)
         price_value.pack(side=tk.LEFT)
         
@@ -334,9 +334,9 @@ class ChargingWindow(tk.Toplevel):
         
     def update_price_display(self):
         """가격 정보 업데이트"""
-        if hasattr(self.ocpp_client, 'comm') and hasattr(self.ocpp_client.comm, 'price_per_w'):
-            price = self.ocpp_client.comm.price_per_w
-            self.price_var.set(f"{price}원/W")
+        if hasattr(self.ocpp_client, 'comm') and hasattr(self.ocpp_client.comm, 'price_per_wh'):
+            price = self.ocpp_client.comm.price_per_wh
+            self.price_var.set(f"{price}원/Wh")
         
     def start_power_monitoring(self):
         """전력 모니터링 시작"""

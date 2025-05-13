@@ -31,7 +31,7 @@ class OcppComm:
         self.message_processor_task = None
         
         # 가격 정보 저장
-        self.price_per_w = 10  # 기본값 10원/W로 설정
+        self.price_per_wh = 10  # 기본값 10원/Wh로 설정
         
         # 트랜잭션 ID 정보 저장
         self.last_transaction_id = None  # 마지막으로 수신한 트랜잭션 ID
@@ -185,13 +185,13 @@ class OcppComm:
                         payload = response_data[2]  # 응답 페이로드
                         message_id = response_data[1]  # 메시지 ID
                         
-                        # pricePermW 값 추출
-                        if "customData" in payload and "pricePermW" in payload["customData"]:
-                            self.price_per_w = payload["customData"]["pricePermW"]
-                            print(f"가격 정보 업데이트: {self.price_per_w}원/W")
+                        # pricePermWh 값 추출
+                        if "customData" in payload and "pricePermWh" in payload["customData"]:
+                            self.price_per_wh = payload["customData"]["pricePermWh"]
+                            print(f"가격 정보 업데이트: {self.price_per_wh}원/Wh")
                         
-                        # Boot Notification Response에서 transactionId 추출
-                        if message_id.startswith("boot-") and "customData" in payload and "transactionId" in payload["customData"]:
+                        # Response에서 transactionId 추출 (메시지 ID 형식과 상관없이 추출)
+                        if "customData" in payload and "transactionId" in payload["customData"]:
                             tx_id = payload["customData"]["transactionId"]
                             # tx_id가 문자열이 아니면 문자열로 변환 (예: tx-003 대신 단순 숫자인 경우)
                             if not isinstance(tx_id, str):

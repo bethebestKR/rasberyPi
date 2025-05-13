@@ -28,10 +28,14 @@ class GuiOcppClient:
         self.prev_power_data = [0] * NUM_EVSE
         self.last_report_time = [0] * NUM_EVSE
         self.last_heartbeat_time = 0
-        self.transaction_counter = [0] * NUM_EVSE
-        self.transaction_id_counter = 1
-        self.seq_num_counter = [1] * NUM_EVSE
+        
+        # 트랜잭션 관련 변수
+        self.transaction_id_counter = 1  # 전체 시스템에서 사용하는 트랜잭션 ID 카운터
+        self.transaction_ids = [None] * NUM_EVSE  # 각 충전기의 현재 트랜잭션 ID
+        self.seq_num_counter = [1] * NUM_EVSE  # 시퀀스 넘버 카운터
         self.boot_notification_sent = False
+        self.server_tx_id_received = False  # 서버에서 트랜잭션 ID를 받았는지 여부
+        
         self.load3_mv = [0.0] * 10
         self.running = False
         self.charging_active = [False] * NUM_EVSE
@@ -121,23 +125,31 @@ class GuiOcppClient:
         if self.transaction_started[evse_id - 1]:
             self.app.log(f"EVSE {evse_id}: 이미 트랜잭션이 시작되었습니다. 중복 이벤트 무시.")
             return True
-            
-        # 트랜잭션 ID 카운터 업데이트
-        # BootNotificationResponse에서 받은 트랜잭션 ID가 있으면 사용
-        if hasattr(self.comm, 'last_transaction_id') and self.comm.last_transaction_id:
+        
+        # 트랜잭션 ID 관리
+        # 서버에서 트랜잭션 ID를 받은 적이 없고, 서버에서 받은 트랜잭션 ID가 있으면 사용
+        if not self.server_tx_id_received and hasattr(self.comm, 'last_transaction_id') and self.comm.last_transaction_id:
             try:
-                # 'tx-003' 형태에서 숫자 부분만 추출하여 다음 번호 할당
+                # 'tx-001' 형태에서 숫자 부분만 추출
                 tx_id = self.comm.last_transaction_id
                 if tx_id.startswith('tx-'):
-                    tx_num = int(tx_id[3:])  # 'tx-003'에서 '003'을 추출하여 정수로 변환
-                    self.transaction_id_counter = tx_num + 1  # 다음 트랜잭션 ID를 위해 +1
+                    tx_num = int(tx_id[3:])  # 'tx-001'에서 '001'을 추출하여 정수로 변환
+                    # 다음 트랜잭션 ID를 위해 +1
+                    self.transaction_id_counter = tx_num + 1
                     self.app.log(f"서버 응답에서 트랜잭션 ID({tx_id})를 기반으로 다음 ID 설정: tx-{self.transaction_id_counter:03d}")
+                    self.server_tx_id_received = True  # 서버에서 ID를 받았음을 표시
             except (ValueError, AttributeError) as e:
                 self.app.log(f"트랜잭션 ID 파싱 오류: {e}. 기본 카운터 사용.")
         
-        self.transaction_counter[evse_id - 1] = self.transaction_id_counter
+        # 현재 충전기에 트랜잭션 ID 할당
+        current_tx_id = self.transaction_id_counter
+        self.transaction_ids[evse_id - 1] = current_tx_id
+        self.app.log(f"충전기 {evse_id}에 트랜잭션 ID tx-{current_tx_id:03d} 할당")
+        
+        # 다음 트랜잭션을 위해 카운터 증가 (다음 충전기가 사용할 ID 준비)
         self.transaction_id_counter += 1
         
+        # TransactionEvent 메시지 생성
         message = {
             "messageTypeId": 2,
             "messageId": generate_message_id(),
@@ -148,7 +160,7 @@ class GuiOcppClient:
                 "triggerReason": TriggerReason.CABLE_PLUGGED_IN.value,
                 "seqNo": self.seq_num_counter[evse_id - 1],
                 "transactionInfo": {
-                    "transactionId": generate_transaction_id(self.transaction_counter[evse_id - 1])
+                    "transactionId": generate_transaction_id(current_tx_id)
                 },
                 "evse": {
                     "id": evse_id
@@ -168,17 +180,18 @@ class GuiOcppClient:
                 }
             }
         }
+        
         self.seq_num_counter[evse_id - 1] += 1
         success = await self.comm.send_message(message)
         if success:
-            self.app.log(f"EVSE {evse_id}: 충전 시작 이벤트 전송됨 (트랜잭션 ID: {self.transaction_counter[evse_id - 1]})")
+            self.app.log(f"EVSE {evse_id}: 충전 시작 이벤트 전송됨 (트랜잭션 ID: tx-{current_tx_id:03d})")
             self.transaction_started[evse_id - 1] = True
         return success
 
     async def send_transaction_event_updated(self, evse_id: int, power_value: int) -> bool:
         """트랜잭션 업데이트 이벤트 전송"""
         # 트랜잭션이 시작되지 않은 경우 업데이트 이벤트 무시
-        if not self.transaction_started[evse_id - 1]:
+        if not self.transaction_started[evse_id - 1] or self.transaction_ids[evse_id - 1] is None:
             return False
             
         message = {
@@ -191,7 +204,7 @@ class GuiOcppClient:
                 "triggerReason": TriggerReason.METER_VALUE_PERIODIC.value,
                 "seqNo": self.seq_num_counter[evse_id - 1],
                 "transactionInfo": {
-                    "transactionId": generate_transaction_id(self.transaction_counter[evse_id - 1])
+                    "transactionId": generate_transaction_id(self.transaction_ids[evse_id - 1])
                 },
                 "evse": {
                     "id": evse_id
@@ -215,13 +228,13 @@ class GuiOcppClient:
         self.seq_num_counter[evse_id - 1] += 1
         success = await self.comm.send_message(message)
         if success:
-            self.app.log(f"EVSE {evse_id}: 전력 사용량 전송됨 [{power_value}W]")
+            self.app.log(f"EVSE {evse_id}: 전력 사용량 전송됨 [{power_value}W] (트랜잭션 ID: tx-{self.transaction_ids[evse_id - 1]:03d})")
         return success
 
     async def send_transaction_event_ended(self, evse_id: int, power_value: int) -> bool:
         """트랜잭션 종료 이벤트 전송"""
         # 트랜잭션이 시작되지 않은 경우 종료 이벤트 무시
-        if not self.transaction_started[evse_id - 1]:
+        if not self.transaction_started[evse_id - 1] or self.transaction_ids[evse_id - 1] is None:
             return False
             
         message = {
@@ -234,7 +247,7 @@ class GuiOcppClient:
                 "triggerReason": TriggerReason.EV_DISCONNECTED.value,
                 "seqNo": self.seq_num_counter[evse_id - 1],
                 "transactionInfo": {
-                    "transactionId": generate_transaction_id(self.transaction_counter[evse_id - 1])
+                    "transactionId": generate_transaction_id(self.transaction_ids[evse_id - 1])
                 },
                 "evse": {
                     "id": evse_id
@@ -258,8 +271,9 @@ class GuiOcppClient:
         self.seq_num_counter[evse_id - 1] += 1
         success = await self.comm.send_message(message)
         if success:
-            self.app.log(f"EVSE {evse_id}: 충전 종료 이벤트 전송됨, 마지막 보고된 전력 [{power_value}W]")
+            self.app.log(f"EVSE {evse_id}: 충전 종료 이벤트 전송됨, 마지막 보고된 전력 [{power_value}W] (트랜잭션 ID: tx-{self.transaction_ids[evse_id - 1]:03d})")
             self.transaction_started[evse_id - 1] = False  # 트랜잭션 종료 상태로 변경
+            self.transaction_ids[evse_id - 1] = None  # 트랜잭션 ID 초기화
         return success
 
     async def send_meter_values(self, evse_id: int, power_value: int) -> bool:
