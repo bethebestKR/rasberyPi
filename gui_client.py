@@ -122,8 +122,22 @@ class GuiOcppClient:
             self.app.log(f"EVSE {evse_id}: 이미 트랜잭션이 시작되었습니다. 중복 이벤트 무시.")
             return True
             
+        # 트랜잭션 ID 카운터 업데이트
+        # BootNotificationResponse에서 받은 트랜잭션 ID가 있으면 사용
+        if hasattr(self.comm, 'last_transaction_id') and self.comm.last_transaction_id:
+            try:
+                # 'tx-003' 형태에서 숫자 부분만 추출하여 다음 번호 할당
+                tx_id = self.comm.last_transaction_id
+                if tx_id.startswith('tx-'):
+                    tx_num = int(tx_id[3:])  # 'tx-003'에서 '003'을 추출하여 정수로 변환
+                    self.transaction_id_counter = tx_num + 1  # 다음 트랜잭션 ID를 위해 +1
+                    self.app.log(f"서버 응답에서 트랜잭션 ID({tx_id})를 기반으로 다음 ID 설정: tx-{self.transaction_id_counter:03d}")
+            except (ValueError, AttributeError) as e:
+                self.app.log(f"트랜잭션 ID 파싱 오류: {e}. 기본 카운터 사용.")
+        
         self.transaction_counter[evse_id - 1] = self.transaction_id_counter
         self.transaction_id_counter += 1
+        
         message = {
             "messageTypeId": 2,
             "messageId": generate_message_id(),

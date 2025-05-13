@@ -23,8 +23,8 @@ class OcppGuiApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("OCPP 충전소 시뮬레이터")
-        self.geometry("900x650")
-        self.minsize(900, 650)
+        self.geometry("1000x1650")  # 원래 창 크기로 되돌림
+        self.minsize(900, 650)    # 원래 최소 크기로 되돌림
         
         # Event loop for asyncio
         self.event_loop = asyncio.new_event_loop()
@@ -157,7 +157,7 @@ class OcppGuiApp(tk.Tk):
         self.charger_visuals = []
         for i in range(1, NUM_EVSE + 1):
             visual_frame = ChargerVisualFrame(self.visual_dashboard, i)
-            visual_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+            visual_frame.pack(fill=tk.BOTH, expand=True, pady=10)  # 원래의 세로 배치로 되돌림
             self.charger_visuals.append(visual_frame)
         
         # Create log tab

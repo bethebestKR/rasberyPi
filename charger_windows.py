@@ -218,6 +218,17 @@ class ChargingWindow(tk.Toplevel):
         status_value = ttk.Label(status_frame, textvariable=self.status_var)
         status_value.pack(side=tk.LEFT)
         
+        # Price information
+        price_frame = ttk.Frame(main_frame)
+        price_frame.pack(fill=tk.X, pady=5)
+        
+        price_label = ttk.Label(price_frame, text="가격:", width=10, anchor="w")
+        price_label.pack(side=tk.LEFT)
+        
+        self.price_var = tk.StringVar(value="10원/W")
+        price_value = ttk.Label(price_frame, textvariable=self.price_var)
+        price_value.pack(side=tk.LEFT)
+        
         # Current power display
         current_power_frame = ttk.Frame(main_frame)
         current_power_frame.pack(fill=tk.X, pady=10)
@@ -310,6 +321,8 @@ class ChargingWindow(tk.Toplevel):
     def update_status(self, status):
         """상태 업데이트"""
         self.status_var.set(status)
+        # 상태가 업데이트될 때 가격 정보도 함께 업데이트
+        self.update_price_display()
         
     def update_connection_status(self, connected):
         """연결 상태 업데이트"""
@@ -318,6 +331,12 @@ class ChargingWindow(tk.Toplevel):
             self.connection_var.set("연결됨")
         else:
             self.connection_var.set("연결 대기중")
+        
+    def update_price_display(self):
+        """가격 정보 업데이트"""
+        if hasattr(self.ocpp_client, 'comm') and hasattr(self.ocpp_client.comm, 'price_per_w'):
+            price = self.ocpp_client.comm.price_per_w
+            self.price_var.set(f"{price}원/W")
         
     def start_power_monitoring(self):
         """전력 모니터링 시작"""
@@ -330,6 +349,9 @@ class ChargingWindow(tk.Toplevel):
         
         # 전력 표시 업데이트
         self.update_power_display(power_value)
+        
+        # 가격 정보 업데이트
+        self.update_price_display()
         
         # CTOC 연결 상태 확인 (전력이 임계값 이상이면 연결된 것으로 간주)
         connected = power_value >= self.power_threshold
@@ -487,6 +509,8 @@ class ChargingWindow(tk.Toplevel):
     def stop_charging_manually(self):
         """수동 충전 중지"""
         self.stop_charging_auto()
+        # 충전 중지 시 가격 정보 업데이트
+        self.update_price_display()
         
     def on_closing(self):
         """창 닫기 처리"""
