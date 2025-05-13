@@ -78,9 +78,9 @@ class OcppGuiApp(tk.Tk):
         
         self.ws_entry = ttk.Entry(ws_frame)
         self.ws_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.ws_entry.insert(0, "ws://localhost:8080/ocpp")
-        
+        self.ws_entry.insert(0, "ws://localhost:8080/ocpp")        
         # Serial port
+        #"/dev/ttyUSB0" 
         serial_frame = ttk.Frame(left_frame)
         serial_frame.pack(fill=tk.X, pady=5)
         
@@ -89,6 +89,7 @@ class OcppGuiApp(tk.Tk):
         
         self.serial_entry = ttk.Entry(serial_frame)
         self.serial_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        # self.serial_entry.insert(0, "/dev/ttyUSB0")
         
         # Use serial checkbox
         self.use_serial_var = tk.BooleanVar(value=False)

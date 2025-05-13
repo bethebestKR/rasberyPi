@@ -355,7 +355,7 @@ class GuiOcppClient:
                 if i*2 < len(self.load3_mv):
                     voltage = self.load3_mv[i*2]
                     # 전압이 임계값(예: 50V) 이상이면 케이블이 연결된 것으로 간주
-                    if voltage > 50.0:
+                    if voltage > 100.0:
                         if not self.cable_connected[i]:
                             self.cable_connected[i] = True
                             self.app.log(f"충전기 {i+1}: 케이블 연결 감지됨")
