@@ -78,7 +78,8 @@ class OcppGuiApp(tk.Tk):
         
         self.ws_entry = ttk.Entry(ws_frame)
         self.ws_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.ws_entry.insert(0, "ws://localhost:8080/ocpp")        
+        self.ws_entry.insert(0, "ws://172.23.141.144:8080/ocpp")
+        
         # Serial port
         #"/dev/ttyUSB0" 
         serial_frame = ttk.Frame(left_frame)
@@ -87,10 +88,11 @@ class OcppGuiApp(tk.Tk):
         serial_label = ttk.Label(serial_frame, text="시리얼 포트:")
         serial_label.pack(side=tk.LEFT, padx=(0, 5))
         
+
         self.serial_entry = ttk.Entry(serial_frame)
         self.serial_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        # self.serial_entry.insert(0, "/dev/ttyUSB0")
-        
+        self.serial_entry.insert(0, "/dev/ttyUSB0")
+
         # Use serial checkbox
         self.use_serial_var = tk.BooleanVar(value=False)
         use_serial_check = ttk.Checkbutton(
@@ -269,6 +271,19 @@ class OcppGuiApp(tk.Tk):
             if charger_id in self.charger_windows and self.charger_windows[charger_id].winfo_exists():
                 self.charger_windows[charger_id].update_power_display(power_value)
                 
+    def update_total_price(self, charger_id, total_price):
+        """충전 완료 후 총 금액 정보 업데이트"""
+        if 1 <= charger_id <= NUM_EVSE:
+            # 로그에 기록
+            self.log(f"충전기 {charger_id}: 총 금액 {total_price}원")
+            
+            # 시각화 대시보드에 총 금액 업데이트
+            self.charger_visuals[charger_id - 1].update_total_price(total_price)
+            
+            # 충전기 창이 열려 있으면 금액 정보 업데이트
+            if charger_id in self.charger_windows and self.charger_windows[charger_id].winfo_exists():
+                self.charger_windows[charger_id].update_total_price(total_price)
+            
     def toggle_connection(self):
         """연결/해제 토글"""
         if not self.ocpp_client or not self.ocpp_client.running:
@@ -332,6 +347,11 @@ class OcppGuiApp(tk.Tk):
         # Check if charger is in use
         if self.charger_in_use[charger_id - 1]:
             messagebox.showinfo("충전기 사용중", f"충전기 {charger_id}는 현재 사용중입니다.")
+            return
+        
+        # Check if charger is unavailable
+        if self.charger_status_vars[charger_id - 1].get() == "Unavailable":
+            messagebox.showinfo("충전기 사용 불가", f"충전기 {charger_id}는 현재 사용할 수 없습니다.")
             return
         
         # First show login window

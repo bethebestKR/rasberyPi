@@ -145,8 +145,8 @@ class LoginWindow(tk.Toplevel):
         self.status_var.set(message)
         
         if success:
-            # 잠시 후 창 닫고 다음 화면으로 이동
-            self.after(1000, lambda: self.on_success())
+            # 지연 없이 즉시 다음 화면으로 이동
+            self.on_success()
         else:
             # 오류 메시지 표시
             self.status_var.set(f"오류: {message}")
@@ -162,7 +162,7 @@ class ChargingWindow(tk.Toplevel):
     def __init__(self, parent, charger_id, ocpp_client, event_loop):
         super().__init__(parent)
         self.title(f"충전기 {charger_id}")
-        self.geometry("400x450")  # 창 크기를 더 작게 조정
+        self.geometry("400x500") 
         self.resizable(False, False)
         self.charger_id = charger_id
         self.ocpp_client = ocpp_client
@@ -229,6 +229,17 @@ class ChargingWindow(tk.Toplevel):
         price_value = ttk.Label(price_frame, textvariable=self.price_var)
         price_value.pack(side=tk.LEFT)
         
+        # Total price information
+        total_price_frame = ttk.Frame(main_frame)
+        total_price_frame.pack(fill=tk.X, pady=5)
+        
+        total_price_label = ttk.Label(total_price_frame, text="총 금액:", width=10, anchor="w")
+        total_price_label.pack(side=tk.LEFT)
+        
+        self.total_price_var = tk.StringVar(value="-")
+        self.total_price_value = ttk.Label(total_price_frame, textvariable=self.total_price_var, font=("Arial", 12, "bold"), foreground="#4CAF50")
+        self.total_price_value.pack(side=tk.LEFT)
+        
         # Current power display
         current_power_frame = ttk.Frame(main_frame)
         current_power_frame.pack(fill=tk.X, pady=10)
@@ -266,7 +277,7 @@ class ChargingWindow(tk.Toplevel):
             
             self.power_entry = ttk.Entry(power_frame)
             self.power_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            self.power_entry.insert(0, "3000")
+            self.power_entry.insert(0, "0")  # 기본값을 0으로 변경
             
             # Apply button
             apply_button = ttk.Button(
@@ -278,7 +289,7 @@ class ChargingWindow(tk.Toplevel):
         else:
             # 시리얼 포트 사용 중일 때는 Entry를 만들지만 표시하지 않음 (다른 메서드에서 참조할 때 오류 방지)
             self.power_entry = ttk.Entry(main_frame)
-            self.power_entry.insert(0, "3000")
+            self.power_entry.insert(0, "0")  # 기본값을 0으로 변경
         
         # Buttons frame
         buttons_frame = ttk.Frame(main_frame)
@@ -367,8 +378,8 @@ class ChargingWindow(tk.Toplevel):
             elif not connected and self.charging and not self.manual_mode:
                 self.stop_charging_auto()
             
-        # 다음 확인 예약 (500ms 마다)
-        self.power_check_timer = self.after(500, self.check_power_and_update_status)
+        # 다음 확인 예약 (500ms에서 1000ms로 증가 - GUI 업데이트 시간 늘림)
+        self.power_check_timer = self.after(1000, self.check_power_and_update_status)
         
     def apply_manual_power(self):
         """수동 전력값 적용"""
@@ -418,15 +429,29 @@ class ChargingWindow(tk.Toplevel):
         
         # 트랜잭션이 아직 시작되지 않았으면 시작
         if not self.transaction_started:
-            # 기본 전력값 설정 (실제 측정값 사용)
-            power = max(3000, self.last_power_value)  # 최소 3000W 또는 현재 측정값
+            # 기본 전력값 설정 (0W로 시작)
+            power = 0  # 기본값을 0W로 변경
             
-            # 트랜잭션 시작 이벤트 전송
-            asyncio.run_coroutine_threadsafe(
-                self.ocpp_client.start_charging(self.charger_id, power), 
-                self.event_loop
-            )
-            self.transaction_started = True
+            # 트랜잭션 시작 이벤트 전송 시 예외 처리 추가
+            try:
+                # 트랜잭션 시작 이벤트를 별도의 함수로 분리하여 실행
+                def start_transaction_async():
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            self.ocpp_client.start_charging(self.charger_id, power), 
+                            self.event_loop
+                        )
+                        self.transaction_started = True
+                    except Exception as e:
+                        print(f"자동 트랜잭션 시작 오류: {e}")
+                        self.update_status("충전 오류")
+                
+                # 약간의 지연을 두어 GUI 업데이트 후 트랜잭션 시작
+                self.after(100, start_transaction_async)
+            except Exception as e:
+                print(f"자동 충전 시작 예약 오류: {e}")
+                self.update_status("충전 오류")
+                return
             
         # 버튼 상태 업데이트 (수동 중지만 가능)
         self.start_button.config(state=tk.DISABLED)
@@ -440,12 +465,26 @@ class ChargingWindow(tk.Toplevel):
         
         # 트랜잭션이 시작되었으면 종료
         if self.transaction_started:
-            # 트랜잭션 종료 이벤트 전송
-            asyncio.run_coroutine_threadsafe(
-                self.ocpp_client.stop_charging(self.charger_id), 
-                self.event_loop
-            )
-            self.transaction_started = False
+            # 트랜잭션 종료 이벤트 전송 시 예외 처리 추가
+            try:
+                # 트랜잭션 종료 이벤트를 별도의 함수로 분리하여 실행
+                def stop_transaction_async():
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            self.ocpp_client.stop_charging(self.charger_id), 
+                            self.event_loop
+                        )
+                        self.transaction_started = False
+                    except Exception as e:
+                        print(f"트랜잭션 종료 오류: {e}")
+                        self.update_status("중지 오류")
+                
+                # 약간의 지연을 두어 GUI 업데이트 후 트랜잭션 종료
+                self.after(100, stop_transaction_async)
+            except Exception as e:
+                print(f"충전 중지 예약 오류: {e}")
+                self.update_status("중지 오류")
+                return
             
         # 버튼 상태 업데이트 (수동 시작만 가능)
         self.start_button.config(state=tk.NORMAL)
@@ -461,8 +500,8 @@ class ChargingWindow(tk.Toplevel):
             if not self.using_serial:
                 # 입력된 전력값 가져오기
                 power = float(self.power_entry.get())
-                if power <= 0:
-                    messagebox.showerror("입력 오류", "전력은 양수여야 합니다")
+                if power < 0:  # 0 이상의 값만 허용
+                    messagebox.showerror("입력 오류", "전력은 0 이상이어야 합니다")
                     return
                     
                 # 전력값 설정
@@ -474,7 +513,7 @@ class ChargingWindow(tk.Toplevel):
                 
                 # 전압/전류 값도 업데이트 (로그에 사용되는 값)
                 voltage = 220.0
-                current = power / voltage
+                current = power / voltage if power > 0 else 0.0  # 0으로 나누기 방지
                 self.ocpp_client.load3_mv[idx*2] = voltage
                 self.ocpp_client.load3_mv[idx*2+1] = current
                 
@@ -484,20 +523,34 @@ class ChargingWindow(tk.Toplevel):
                 # 케이블 연결 상태 설정
                 self.ocpp_client.cable_connected[idx] = True
             else:
-                # 시리얼 포트 사용 중인 경우 실제 측정값 사용
-                power = max(3000, self.last_power_value)  # 최소 3000W 또는 현재 측정값
+                # 시리얼 포트 사용 중인 경우 초기 전력값 0으로 시작
+                power = 0  # 기본값을 0W로 변경
             
             # 충전 시작
             self.charging = True
             self.update_status("충전 중 (수동 모드)")
             self.update_connection_status(True)
             
-            # 트랜잭션 시작 이벤트 전송
-            asyncio.run_coroutine_threadsafe(
-                self.ocpp_client.start_charging(self.charger_id, power), 
-                self.event_loop
-            )
-            self.transaction_started = True
+            # 트랜잭션 시작 이벤트 전송 시 예외 처리 추가
+            try:
+                # 트랜잭션 시작 이벤트를 별도의 함수로 분리하여 실행
+                def start_transaction_async():
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            self.ocpp_client.start_charging(self.charger_id, power), 
+                            self.event_loop
+                        )
+                        self.transaction_started = True
+                    except Exception as e:
+                        print(f"트랜잭션 시작 오류: {e}")
+                        messagebox.showerror("충전 시작 오류", f"충전 시작 중 오류가 발생했습니다:\n{str(e)}")
+                
+                # 약간의 지연을 두어 GUI 업데이트 후 트랜잭션 시작
+                self.after(100, start_transaction_async)
+            except Exception as e:
+                print(f"충전 시작 예약 오류: {e}")
+                messagebox.showerror("충전 시작 오류", f"충전 시작 중 오류가 발생했습니다:\n{str(e)}")
+                return
             
             # 버튼 상태 업데이트
             self.start_button.config(state=tk.DISABLED)
@@ -505,6 +558,9 @@ class ChargingWindow(tk.Toplevel):
             
         except ValueError:
             messagebox.showerror("입력 오류", "유효한 숫자를 입력하세요")
+        except Exception as e:
+            print(f"충전 시작 중 예상치 못한 오류: {e}")
+            messagebox.showerror("충전 시작 오류", f"충전 시작 중 오류가 발생했습니다:\n{str(e)}")
         
     def stop_charging_manually(self):
         """수동 충전 중지"""
@@ -525,3 +581,28 @@ class ChargingWindow(tk.Toplevel):
                 self.destroy()
         else:
             self.destroy()
+
+    def update_total_price(self, total_price):
+        """총 금액 정보 업데이트"""
+        try:
+            if total_price is not None:
+                # 금액 유효성 확인
+                if isinstance(total_price, (int, float)) and total_price >= 0:
+                    self.total_price_var.set(f"{total_price}원")
+                    
+                    # 충전 상태를 '완료'로 변경하고 버튼 상태 업데이트
+                    self.charging = False
+                    self.manual_mode = False
+                    self.update_status("충전 완료")
+                    
+                    # 버튼 상태 업데이트
+                    self.start_button.config(state=tk.NORMAL)
+                    self.stop_button.config(state=tk.DISABLED)
+                else:
+                    print(f"금액 형식 오류: {total_price}")
+                    self.total_price_var.set("금액 오류")
+            else:
+                self.total_price_var.set("-")
+        except Exception as e:
+            print(f"총 금액 업데이트 오류: {e}")
+            self.total_price_var.set("업데이트 오류")

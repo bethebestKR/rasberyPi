@@ -35,6 +35,9 @@ class OcppComm:
         
         # 트랜잭션 ID 정보 저장
         self.last_transaction_id = None  # 마지막으로 수신한 트랜잭션 ID
+        
+        # 충전 완료 후 총 금액 정보 저장
+        self.total_price = None  # 트랜잭션 종료 시 받은 총 금액
 
     async def connect_websocket(self) -> bool:
         """WebSocket 연결"""
@@ -138,6 +141,11 @@ class OcppComm:
             retry_info = f" (재시도: {message.get('retry_count', 0)}/{self.max_retries})" if message.get('retry_count', 0) > 0 else ""
             print(f"[WebSocket sending]{retry_info} {json_message}")
             
+            # 트랜잭션 종료 이벤트인지 확인
+            is_tx_ended = message.get("action") == "TransactionEvent" and message.get("payload", {}).get("eventType") == "Ended"
+            if is_tx_ended:
+                print("트랜잭션 종료 이벤트 전송 - 응답에서 총 금액 정보 확인 예정")
+            
             await self.websocket.send(json_message)
             
             # 응답 수신 태스크 시작
@@ -174,13 +182,34 @@ class OcppComm:
                 response = await self.websocket.recv()
                 print(f"서버 응답: {response}")
                 
-                # 응답 저장 및 이벤트 설정
-                self.last_response = response
-                self.response_event.set()
-                
                 # 응답 파싱
                 try:
                     response_data = json.loads(response)
+                    
+                    # 요청 메시지 처리 (CALL - messageTypeId = 2)
+                    if len(response_data) >= 4 and response_data[0] == 2:
+                        message_id = response_data[1]
+                        action = response_data[2]
+                        payload = response_data[3]
+                        
+                        # 요청 처리 완료 후 응답 이벤트 설정 (중요: 응답 대기 타임아웃 방지)
+                        self.last_response = "request_handled"
+                        self.response_event.set()
+                        
+                        # ChangeAvailability 요청 처리
+                        if action == "ChangeAvailability":
+                            await self.handle_change_availability(message_id, payload)
+                            return
+                            
+                        # RequestStopTransaction 요청 처리 추가
+                        if action == "RequestStopTransaction":
+                            await self.handle_request_stop_transaction(message_id, payload)
+                            return
+                    
+                    # 일반 응답 처리 (기존 로직)
+                    self.last_response = response
+                    self.response_event.set()
+                    
                     if len(response_data) >= 3 and response_data[0] == 3:  # 응답 메시지인 경우
                         payload = response_data[2]  # 응답 페이로드
                         message_id = response_data[1]  # 메시지 ID
@@ -198,6 +227,17 @@ class OcppComm:
                                 tx_id = f"tx-{int(tx_id):03d}"
                             self.last_transaction_id = tx_id
                             print(f"트랜잭션 ID 업데이트: {self.last_transaction_id}")
+                            
+                        # 총 금액 정보 추출 (TransactionEvent.Ended 응답에 포함)
+                        if "totalPrice" in payload:
+                            price_value = payload["totalPrice"]
+                            # 숫자인지 확인하고 유효한 경우에만 설정
+                            if isinstance(price_value, (int, float)) and price_value >= 0:
+                                # total_price 설정 (이 값은 send_transaction_event_ended에서 확인됨)
+                                self.total_price = price_value
+                                print(f"총 금액 정보 수신: {self.total_price}원")
+                            else:
+                                print(f"유효하지 않은 금액 정보: {price_value}")
                 except Exception as e:
                     print(f"응답 파싱 중 오류: {e}")
                 
@@ -208,3 +248,91 @@ class OcppComm:
                 self.websocket = None
                 # 오류 발생 시에도 이벤트 설정 (대기 중인 태스크가 진행되도록)
                 self.response_event.set()
+                
+    async def handle_change_availability(self, message_id, payload):
+        """ChangeAvailability 요청 처리"""
+        try:
+            print(f"ChangeAvailability 요청 수신: {payload}")
+            
+            # 요청 파라미터 확인
+            operational_status = payload.get("operationalStatus")
+            evse_id = payload.get("evse", {}).get("id")
+            
+            if not operational_status or not evse_id:
+                print("필수 파라미터 누락")
+                # 오류가 있어도 항상 일반 응답 전송
+                await self.send_availability_response(message_id, False)
+                return
+                
+            # 이벤트 발생 (GUI 클라이언트에서 처리)
+            if hasattr(self, 'change_availability_callback') and callable(self.change_availability_callback):
+                is_operative = (operational_status == "Operative")
+                success = await self.change_availability_callback(evse_id, is_operative)
+                
+                # 응답 전송
+                await self.send_availability_response(message_id, success)
+            else:
+                print("change_availability_callback이 설정되지 않음")
+                await self.send_availability_response(message_id, False)
+                
+        except Exception as e:
+            print(f"ChangeAvailability 처리 중 오류: {e}")
+            # 오류가 발생해도 항상 일반 응답으로 처리
+            await self.send_availability_response(message_id, False)
+            
+    async def handle_request_stop_transaction(self, message_id, payload):
+        """RequestStopTransaction 요청 처리"""
+        try:
+            print(f"RequestStopTransaction 요청 수신: {payload}")
+            
+            # 요청 파라미터 확인
+            evse_id = payload.get("evseId")
+            
+            if not evse_id:
+                print("필수 파라미터 누락")
+                await self.send_stop_transaction_response(message_id, False)
+                return
+                
+            # 문자열이면 정수로 변환
+            try:
+                evse_id = int(evse_id)
+            except ValueError:
+                print(f"유효하지 않은 충전기 ID: {evse_id}")
+                await self.send_stop_transaction_response(message_id, False)
+                return
+                
+            # 콜백 호출
+            if hasattr(self, 'stop_transaction_callback') and callable(self.stop_transaction_callback):
+                success = await self.stop_transaction_callback(evse_id)
+                await self.send_stop_transaction_response(message_id, success)
+            else:
+                print("stop_transaction_callback이 설정되지 않음")
+                await self.send_stop_transaction_response(message_id, False)
+                
+        except Exception as e:
+            print(f"RequestStopTransaction 처리 중 오류: {e}")
+            await self.send_stop_transaction_response(message_id, False)
+            
+    async def send_stop_transaction_response(self, message_id, success):
+        """RequestStopTransaction 응답 전송"""
+        status = "Accepted" if success else "Rejected"
+        response = json.dumps([3, message_id, {"status": status}])
+        
+        print(f"RequestStopTransaction 응답 전송: {response}")
+        await self.websocket.send(response)
+        
+    def set_stop_transaction_callback(self, callback):
+        """RequestStopTransaction 콜백 설정"""
+        self.stop_transaction_callback = callback
+            
+    async def send_availability_response(self, message_id, success):
+        """ChangeAvailability 응답 전송"""
+        status = "Accepted" if success else "Rejected"
+        response = json.dumps([3, message_id, {"status": status}])
+        
+        print(f"ChangeAvailability 응답 전송: {response}")
+        await self.websocket.send(response)
+        
+    def set_change_availability_callback(self, callback):
+        """ChangeAvailability 콜백 설정"""
+        self.change_availability_callback = callback

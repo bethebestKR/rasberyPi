@@ -35,6 +35,7 @@ class GuiOcppClient:
         self.seq_num_counter = [1] * NUM_EVSE  # 시퀀스 넘버 카운터
         self.boot_notification_sent = False
         self.server_tx_id_received = False  # 서버에서 트랜잭션 ID를 받았는지 여부
+        self.tx_id_lock = asyncio.Lock()  # 트랜잭션 ID 생성을 위한 락 추가
         
         self.load3_mv = [0.0] * 10
         self.running = False
@@ -46,6 +47,18 @@ class GuiOcppClient:
         
         # 트랜잭션 시작 상태 추적을 위한 변수 추가
         self.transaction_started = [False] * NUM_EVSE
+
+        # 충전 대기 상태 플래그 추가
+        self.charging_pending = [False] * NUM_EVSE  # 충전 대기 상태 플래그
+        
+        # 충전기 가용성 상태 추적 변수 추가
+        self.charger_available = [True] * NUM_EVSE  # 초기값은, 모든 충전기가 사용 가능
+
+        # ChangeAvailability 콜백 등록
+        self.comm.set_change_availability_callback(self.handle_change_availability)
+        
+        # RequestStopTransaction 콜백 등록
+        self.comm.set_stop_transaction_callback(self.handle_request_stop_transaction)
         
     def is_raspberry_pi(self):
         """라즈베리파이 환경인지 확인"""
@@ -126,28 +139,30 @@ class GuiOcppClient:
             self.app.log(f"EVSE {evse_id}: 이미 트랜잭션이 시작되었습니다. 중복 이벤트 무시.")
             return True
         
-        # 트랜잭션 ID 관리
-        # 서버에서 트랜잭션 ID를 받은 적이 없고, 서버에서 받은 트랜잭션 ID가 있으면 사용
-        if not self.server_tx_id_received and hasattr(self.comm, 'last_transaction_id') and self.comm.last_transaction_id:
-            try:
-                # 'tx-001' 형태에서 숫자 부분만 추출
-                tx_id = self.comm.last_transaction_id
-                if tx_id.startswith('tx-'):
-                    tx_num = int(tx_id[3:])  # 'tx-001'에서 '001'을 추출하여 정수로 변환
-                    # 다음 트랜잭션 ID를 위해 +1
-                    self.transaction_id_counter = tx_num + 1
-                    self.app.log(f"서버 응답에서 트랜잭션 ID({tx_id})를 기반으로 다음 ID 설정: tx-{self.transaction_id_counter:03d}")
-                    self.server_tx_id_received = True  # 서버에서 ID를 받았음을 표시
-            except (ValueError, AttributeError) as e:
-                self.app.log(f"트랜잭션 ID 파싱 오류: {e}. 기본 카운터 사용.")
-        
-        # 현재 충전기에 트랜잭션 ID 할당
-        current_tx_id = self.transaction_id_counter
-        self.transaction_ids[evse_id - 1] = current_tx_id
-        self.app.log(f"충전기 {evse_id}에 트랜잭션 ID tx-{current_tx_id:03d} 할당")
-        
-        # 다음 트랜잭션을 위해 카운터 증가 (다음 충전기가 사용할 ID 준비)
-        self.transaction_id_counter += 1
+        # 트랜잭션 ID 생성 및 할당 (락을 사용하여 동기화)
+        async with self.tx_id_lock:
+            # 트랜잭션 ID 관리
+            # 서버에서 트랜잭션 ID를 받은 적이 없고, 서버에서 받은 트랜잭션 ID가 있으면 사용
+            if not self.server_tx_id_received and hasattr(self.comm, 'last_transaction_id') and self.comm.last_transaction_id:
+                try:
+                    # 'tx-001' 형태에서 숫자 부분만 추출
+                    tx_id = self.comm.last_transaction_id
+                    if tx_id.startswith('tx-'):
+                        tx_num = int(tx_id[3:])  # 'tx-001'에서 '001'을 추출하여 정수로 변환
+                        # 다음 트랜잭션 ID를 위해 +1
+                        self.transaction_id_counter = tx_num + 1
+                        self.app.log(f"서버 응답에서 트랜잭션 ID({tx_id})를 기반으로 다음 ID 설정: tx-{self.transaction_id_counter:03d}")
+                        self.server_tx_id_received = True  # 서버에서 ID를 받았음을 표시
+                except (ValueError, AttributeError) as e:
+                    self.app.log(f"트랜잭션 ID 파싱 오류: {e}. 기본 카운터 사용.")
+            
+            # 현재 충전기에 트랜잭션 ID 할당
+            current_tx_id = self.transaction_id_counter
+            self.transaction_ids[evse_id - 1] = current_tx_id
+            self.app.log(f"충전기 {evse_id}에 트랜잭션 ID tx-{current_tx_id:03d} 할당")
+            
+            # 다음 트랜잭션을 위해 카운터 증가 (다음 충전기가 사용할 ID 준비)
+            self.transaction_id_counter += 1
         
         # TransactionEvent 메시지 생성
         message = {
@@ -269,11 +284,40 @@ class GuiOcppClient:
             }
         }
         self.seq_num_counter[evse_id - 1] += 1
+        
+        # 응답 수신을 위해 미리 total_price를 초기화
+        self.comm.total_price = None
+        
+        # 메시지 전송
         success = await self.comm.send_message(message)
         if success:
             self.app.log(f"EVSE {evse_id}: 충전 종료 이벤트 전송됨, 마지막 보고된 전력 [{power_value}W] (트랜잭션 ID: tx-{self.transaction_ids[evse_id - 1]:03d})")
-            self.transaction_started[evse_id - 1] = False  # 트랜잭션 종료 상태로 변경
-            self.transaction_ids[evse_id - 1] = None  # 트랜잭션 ID 초기화
+            
+            # 서버 응답을 기다림 (최대 3초)
+            wait_time = 0
+            max_wait = 30  # 100ms * 30 = 3초
+            while wait_time < max_wait and self.comm.total_price is None:
+                await asyncio.sleep(0.1)
+                wait_time += 1
+            
+            # total_price가 설정된 경우에만 UI 업데이트
+            if self.comm.total_price is not None:
+                total_price = self.comm.total_price
+                self.app.log(f"EVSE {evse_id}: 총 충전 금액: {total_price}원")
+                
+                # GUI에 총 금액 표시 업데이트
+                if hasattr(self.app, 'update_total_price'):
+                    self.app.update_total_price(evse_id, total_price)
+                
+                # 사용 후 초기화
+                self.comm.total_price = None
+            else:
+                self.app.log(f"EVSE {evse_id}: 서버에서 총 금액 정보를 받지 못했습니다.")
+            
+            # 트랜잭션 상태 초기화
+            self.transaction_started[evse_id - 1] = False
+            self.transaction_ids[evse_id - 1] = None
+            
         return success
 
     async def send_meter_values(self, evse_id: int, power_value: int) -> bool:
@@ -343,6 +387,7 @@ class GuiOcppClient:
                 self.serial_data_valid = False
                 return False
             values = data.strip().split()
+            self.app.log(f"수신된 데이터: {values}")
             for i in range(min(len(values), 10)):
                 try:
                     self.load3_mv[i] = float(values[i])
@@ -355,7 +400,7 @@ class GuiOcppClient:
                 if i*2 < len(self.load3_mv):
                     voltage = self.load3_mv[i*2]
                     # 전압이 임계값(예: 50V) 이상이면 케이블이 연결된 것으로 간주
-                    if voltage > 100.0:
+                    if voltage > 50.0:
                         if not self.cable_connected[i]:
                             self.cable_connected[i] = True
                             self.app.log(f"충전기 {i+1}: 케이블 연결 감지됨")
@@ -419,13 +464,20 @@ class GuiOcppClient:
     async def check_charging_start(self):
         """충전 시작 확인"""
         for i in range(NUM_EVSE):
-            if self.prev_power_data[i] == 0 and self.power_data[i] > 0:
-                evse_id = i + 1
-                # 상태 알림만 보내고, 트랜잭션 이벤트는 start_charging에서만 보냄
+            evse_id = i + 1
+            
+            # 충전 대기 상태이고 전력값이 일정 이상이면 트랜잭션 시작
+            if self.charging_pending[i] and self.power_data[i] > 100:  # 100W 이상일 때
+                self.charging_pending[i] = False  # 대기 상태 해제
+                
+                # 이제 실제 측정값으로 트랜잭션 시작 이벤트 전송
+                await self.send_transaction_event_started(evse_id)
+                self.app.log(f"충전기 {evse_id}: 실제 전력 감지됨, 트랜잭션 시작 ({self.power_data[i]}W)")
+            
+            # 기존 로직
+            elif self.prev_power_data[i] == 0 and self.power_data[i] > 0:
                 if not self.transaction_started[i]:
                     await self.send_status_notification(evse_id, ConnectorStatus.OCCUPIED)
-                    # 트랜잭션 이벤트는 start_charging에서 이미 보냈으므로 여기서는 보내지 않음
-                    # await self.send_transaction_event_started(evse_id)
 
     async def report_power_usage(self):
         """전력 사용량 보고"""
@@ -450,25 +502,67 @@ class GuiOcppClient:
                 self.charging_active[i] = False
             self.prev_power_data[i] = self.power_data[i]
 
+    async def handle_change_availability(self, evse_id: int, is_operative: bool) -> bool:
+        """서버로부터 ChangeAvailability 요청 처리"""
+        try:
+            if 1 <= evse_id <= NUM_EVSE:
+                port_idx = evse_id - 1
+                
+                # 충전기 가용성 상태 업데이트
+                self.charger_available[port_idx] = is_operative
+                
+                # UI 업데이트
+                if is_operative:
+                    # Available 상태로 변경 (사용 가능)
+                    await self.send_status_notification(evse_id, ConnectorStatus.AVAILABLE)
+                    self.app.log(f"충전기 {evse_id}: 서버 요청에 의해 '사용 가능' 상태로 변경되었습니다.")
+                else:
+                    # Unavailable 상태로 변경 (사용 불가)
+                    await self.send_status_notification(evse_id, ConnectorStatus.UNAVAILABLE)
+                    self.app.log(f"충전기 {evse_id}: 서버 요청에 의해 '사용 불가' 상태로 변경되었습니다.")
+                    
+                    # 충전 중이면 충전 중지
+                    if self.charging_active[port_idx]:
+                        await self.stop_charging(evse_id)
+                
+                return True
+            else:
+                self.app.log(f"유효하지 않은 충전기 ID: {evse_id}")
+                return False
+        except Exception as e:
+            self.app.log(f"ChangeAvailability 처리 중 오류: {e}")
+            return False
+
     async def start_charging(self, evse_id: int, power_value: int):
         """충전 시작"""
         if 1 <= evse_id <= NUM_EVSE:
             port_idx = evse_id - 1
+            
+            # 충전기가 사용 불가 상태인 경우 충전 불가
+            if not self.charger_available[port_idx]:
+                self.app.log(f"충전기 {evse_id}는 현재 사용 불가 상태입니다.")
+                return False
+                
             self.manual_power[port_idx] = power_value
             self.charging_active[port_idx] = True
             self.app.log(f"충전기 {evse_id}의 충전을 시작합니다. 전력: {power_value}W")
-            
+        
             # 시리얼 연결이 있는 경우 전력 공급 명령 전송
             if self.use_serial:
                 self.send_power_control_command(evse_id, True)
             
-            # Update status to Occupied
-            await self.send_status_notification(evse_id, ConnectorStatus.OCCUPIED)
+                # 상태만 Occupied로 변경하고, 트랜잭션 이벤트는 아직 보내지 않음
+                await self.send_status_notification(evse_id, ConnectorStatus.OCCUPIED)
             
-            # 트랜잭션 시작 이벤트 전송 (여기서만 전송)
-            await self.send_transaction_event_started(evse_id)
-            
-            return True
+                # 트랜잭션 시작 플래그 설정 (아직 이벤트는 보내지 않음)
+                # 수정: 특정 충전기만 대기 상태로 설정
+                self.charging_pending[evse_id - 1] = True  # 해당 충전기만 대기 상태로 설정
+                return True
+            else:
+                # 시리얼 연결이 없는 경우 기존처럼 처리
+                await self.send_status_notification(evse_id, ConnectorStatus.OCCUPIED)
+                await self.send_transaction_event_started(evse_id)
+                return True
         return False
 
     async def stop_charging(self, evse_id: int):
@@ -490,6 +584,29 @@ class GuiOcppClient:
             
             return True
         return False
+
+    async def handle_request_stop_transaction(self, evse_id: int) -> bool:
+        """서버로부터 RequestStopTransaction 요청 처리"""
+        try:
+            if 1 <= evse_id <= NUM_EVSE:
+                port_idx = evse_id - 1
+                
+                # 충전 중인지 확인
+                if self.charging_active[port_idx]:
+                    self.app.log(f"충전기 {evse_id}: 서버 요청에 의해 충전이 중지됩니다.")
+                    
+                    # 충전 중지 호출
+                    success = await self.stop_charging(evse_id)
+                    return success
+                else:
+                    self.app.log(f"충전기 {evse_id}: 충전 중이 아니므로 중지 요청이 거부되었습니다.")
+                    return False
+            else:
+                self.app.log(f"유효하지 않은 충전기 ID: {evse_id}")
+                return False
+        except Exception as e:
+            self.app.log(f"RequestStopTransaction 처리 중 오류: {e}")
+            return False
 
     async def run_loop(self):
         """메인 루프 실행"""
@@ -514,6 +631,7 @@ class GuiOcppClient:
             self.power_data[i] = 0
             self.prev_power_data[i] = 0
             self.transaction_started[i] = False  # 트랜잭션 시작 상태 초기화
+            self.manual_power[i] = 0  # 초기 수동 전력값을 0으로 설정
             
         if websocket_connected:
             await self.send_boot_notification()
@@ -549,10 +667,16 @@ class GuiOcppClient:
                     # Generate temporary data for active chargers
                     for i in range(NUM_EVSE):
                         if self.charging_active[i]:
-                            base_power = self.manual_power[i] if self.manual_power[i] > 0 else 3000
-                            variation = random.uniform(-200, 200)
+                            base_power = self.manual_power[i]
+                            # 전력값이 0이면 변동 없이 유지, 0보다 크면 변동 추가
+                            if base_power > 0:
+                                variation = random.uniform(-200, 200)
+                                power_with_variation = max(0, base_power + variation)
+                            else:
+                                power_with_variation = 0
+                            
                             self.load3_mv[i*2] = 220.0  # Voltage
-                            self.load3_mv[i*2+1] = (base_power + variation) / 220.0  # Current
+                            self.load3_mv[i*2+1] = power_with_variation / 220.0 if power_with_variation > 0 else 0.0  # Current
                         else:
                             self.load3_mv[i*2] = 0.0
                             self.load3_mv[i*2+1] = 0.0
@@ -571,7 +695,7 @@ class GuiOcppClient:
                 else:
                     self.app.log("데이터 읽기 오류")
                     
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.5)  # 0.1초에서 0.5초로 변경
         except Exception as e:
             self.app.log(f"오류 발생: {e}")
         finally:

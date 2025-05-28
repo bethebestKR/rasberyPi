@@ -220,6 +220,17 @@ class ChargerVisualFrame(ttk.LabelFrame):
         power_value = ttk.Label(power_frame, textvariable=self.power_var)
         power_value.pack(side=tk.LEFT)
         
+        # Total price info
+        price_frame = ttk.Frame(info_frame)
+        price_frame.pack(fill=tk.X, pady=2)
+        
+        price_label = ttk.Label(price_frame, text="총 금액:", width=10)
+        price_label.pack(side=tk.LEFT)
+        
+        self.total_price_var = tk.StringVar(value="-")
+        price_value = ttk.Label(price_frame, textvariable=self.total_price_var, font=("Arial", 10, "bold"))
+        price_value.pack(side=tk.LEFT)
+        
         # Last updated info
         update_frame = ttk.Frame(info_frame)
         update_frame.pack(fill=tk.X, pady=2)
@@ -251,3 +262,17 @@ class ChargerVisualFrame(ttk.LabelFrame):
         self.power_var.set(f"{power} W")
         self.power_meter.update_power(power)
         self.update_var.set(time.strftime('%H:%M:%S'))
+        
+    def update_total_price(self, total_price):
+        """총 금액 정보 업데이트"""
+        if total_price is not None:
+            self.total_price_var.set(f"{total_price}원")
+            
+            # 상태가 Available이 아니면 사용 가능으로 변경 (충전 완료 시)
+            if self.status_var.get() != "사용 가능":
+                self.update_status("Available")
+                
+            # 현재 시간 업데이트
+            self.update_var.set(time.strftime('%H:%M:%S'))
+        else:
+            self.total_price_var.set("-")
